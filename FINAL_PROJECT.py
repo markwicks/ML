@@ -7,6 +7,7 @@
 
 import numpy as np
 import pandas as pd
+import matplotlib.pyplot as plt
 
 from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.naive_bayes import MultinomialNB
@@ -37,7 +38,7 @@ pd.set_option('display.max_rows', 50)
 pd.set_option('display.max_columns', 20)
 np.set_printoptions(suppress=True)
 
-SAMPLE_SIZE = 0.1 # fraction of dataset to sample
+SAMPLE_SIZE = 1 # fraction of dataset to sample
 DEV_SHARE  = 0.15 # fraction of dataset for dev set
 TEST_SHARE = 0.15 # fraction of dataset for test set
 
@@ -115,7 +116,7 @@ def READ_DATA(DIR, FILENAME, SAMPLE_SIZE):
     print("")
 
     RAW_DATA = pd.read_csv(DIR + '/DATA/' + FILENAME) 
-    RAW_DATA.drop(columns=['job_id'])
+    #RAW_DATA.drop(columns=['job_id'])
     RAW_DATA = RAW_DATA.sample(frac=SAMPLE_SIZE)
     
     return RAW_DATA
@@ -126,6 +127,95 @@ def READ_DATA(DIR, FILENAME, SAMPLE_SIZE):
 #########################
 def CLEAN_DATA(DATA):
 
+### VARIABLES ###
+# job_id',               <-- junk
+# 'title',               <-- string field (1490 different values)
+# 'location',            <-- tuple (country, state, city)
+# 'department',          <-- string field (271 different values)
+# 'salary_range',        <-- string field
+# 'company_profile',     <-- string field
+# 'description',         <-- string field
+# 'requirements',        <-- string field
+# 'benefits',            <-- string field
+# 'telecommuting',       <-- binary
+# 'has_company_logo',    <-- binary
+# 'has_questions',       <-- binary
+# 'employment_type',     <-- categorical (6 different values)   converted to dummies
+# 'required_experience', <-- categorical (8 different values)   converted to dummies
+# 'required_education',  <-- categorical (13 different values)  converted to dummies
+# 'industry',            <-- string field (98 different values)
+# 'function',            <-- categorical (38 different values)  converted to dummies
+# 'fraudulent'           <-- response variable    
+     
+    ###############################################
+    ### SPLIT LOCATION INTO COUNTY, STATE, CITY ###
+    ###############################################
+    
+    DATA['country'] = ""
+    DATA['state'] = ""
+    DATA['city'] = ""
+
+    for x in range(DATA.shape[0]):
+        
+        val = str(DATA.location.values[x]).replace(", ,", ",")
+        if val==" ": val=""
+ 
+        count = val.count(",")
+        
+        if count==2:
+            
+           COUNTRY, STATE, CITY = val.split(',')
+           
+           DATA.country.values[x] = COUNTRY
+           DATA.state.values[x]   = STATE   
+           DATA.city.values[x]    = CITY
+                     
+           #print("-->" +str(COUNTRY) + "    " + 
+           #      str(STATE) + "   " + str(type(CITY)))
+           
+        elif count==3:
+            
+           COUNTRY, STATE, CITY, JUNK = val.split(',')
+           
+        else: continue
+
+        DATA.country.values[x] = COUNTRY.replace("  ", " ")
+        DATA.state.values[x]   = STATE.replace("  ", " ") 
+        DATA.city.values[x]    = CITY.replace("  ", " ")
+        
+    ########################################
+    ### CONVERT CITY VARIABLE TO DUMMIES ###
+    ########################################
+        
+    CITY_DUMMIES = pd.get_dummies(DATA[['city']])[['city_ London', "city_", "city_ New York", "city_ Athens", 
+                                                   'city_ San Francisco', 'city_ Houston', 'city_ Washington',
+                                                   'city_ Chicago', 'city_ Berlin', 'city_ Auckland', 'city_ Los Angeles',
+                                                   'city_ Austin', 'city_ San Diego', 'city_ Atlanta', 'city_ Portland',
+                                                   'city_ Toronto', 'city_ Boston', 'city_ Philadelphia', 'city_ Detroit']]
+    
+    CITY_DUMMIES = CITY_DUMMIES.rename(columns={
+                                          "city_ ":              "city_null",
+                                          "city_ London":        "city_london", 
+                                          "city_ New York":      "city_new_york",
+                                          "city_ Athens":        "city_athen",
+                                          "city_ San Francisco": "city_san_fran",
+                                          "city_ Houston":        "city_houson",
+                                          "city_ Washington":    "city_washington",
+                                          "city_ Chicago":       "city_chicago",
+                                          "city_ Berlin":        "city_berlin",
+                                          "city_ Auckland":      "city_auckland",
+                                          "city_ Los Angeles":   "city_los_angeles",
+                                          "city_ Austin":        "city_austin",
+                                          "city_ San Diego":     "city_san_diego",
+                                          "city_ Atlanta":       "city_atlanta",
+                                          "city_ Portland":      "city_portland",
+                                          "city_ Toronto":       "city_toronto",
+                                          "city_ Boston":        "city_boston",
+                                          "city_ Philadelphia":  "city_philadelphia",
+                                          "city_ Detroit":       "city_detroit"
+                                           })
+    
+    DATA = pd.concat([DATA, CITY_DUMMIES], axis=1)   
     
     ###################################
     ### SPLIT salary_range VARIABLE ###
@@ -143,39 +233,166 @@ def CLEAN_DATA(DATA):
               DATA.low_salary_range.values[x] = LOW
               DATA.high_salary_range.values[x] = HIGH
 
+    ##############################################
+    ### CONVERT required_experience TO DUMMIES ###
+    ##############################################
+    # need to create categories for blank fields
+
+    # dummy_na=True gives us a column for the NAs
+    REQ_EXP_DUMMIES = pd.get_dummies(DATA[['required_experience']], dummy_na=True)
+    
+    REQ_EXP_DUMMIES = REQ_EXP_DUMMIES.rename(columns={
+                   "required_experience_Associate":        "req_exp_associate", 
+                   "required_experience_Director":         "req_exp_director",
+                   "required_experience_Entry level":      "req_exp_entry_level",
+                   "required_experience_Executive":        "req_exp_executive",
+                   "required_experience_Internship":       "req_exp_internship",
+                   "required_experience_Mid-Senior level": "req_exp_mid_senior",
+                   "required_experience_Not Applicable":   "req_exp_not_applicable"
+                    })
+    
+    DATA = pd.concat([DATA, REQ_EXP_DUMMIES], axis=1)
+    
     ##########################################
     ### CONVERT employment_type TO DUMMIES ###
     ##########################################
+    # need to create categories for blank fields
 
     # dummy_na=True gives us a column for the NAs
-    DUMMIES = pd.get_dummies(DATA[['required_experience', 'employment_type']], dummy_na=True)
-    DATA.drop(columns=['required_experience', 'employment_type'])
-    DATA = pd.concat([DATA, DUMMIES], axis=1)
+    EMP_TYPE_DUMMIES = pd.get_dummies(DATA[['employment_type']], dummy_na=True)
     
+    EMP_TYPE_DUMMIES = EMP_TYPE_DUMMIES.rename(columns={
+                   "employment_type_Contract":   "emp_type_contract",
+                   "employment_type_Full-time":  "emp_type_full_time",
+                   "employment_type_Other":      "emp_type_other",
+                   "employment_type_Part-time":  "emp_type_part_time",
+                   "employment_type_Temporary":  "emp_type_temp"
+                   })  
+    
+    DATA = pd.concat([DATA, EMP_TYPE_DUMMIES], axis=1)   
+    
+    ##########################################
+    ### CONVERT function_type TO DUMMIES ###
+    ##########################################   
+    
+    # Need to add a dummy variable for areas not included in this list
     FUNCTION_DUMMIES = pd.get_dummies(DATA.function)[['Information Technology', 'Sales', 'Engineering', 
                                                       'Customer Service', 'Marketing', 'Administrative', 'Other',
                                                       'Health Care Provider', 'Management', 'Design']]
     
     DATA = pd.concat([DATA, FUNCTION_DUMMIES], axis=1)
-
-    ########################
-    ### RENAME VARIABLES ###
-    ########################
     
-    DATA.rename(columns={"required_experience_Associate":        "req_exp_associate", 
-                         "required_experience_Director":         "req_exp_director",
-                         "required_experience_Entry level":      "req_exp_entry_level",
-                         "required_experience_Executive":        "req_exp_executive",
-                         "required_experience_Internship":       "req_exp_internship",
-                         "required_experience_Mid-Senior level": "req_exp_mid_senior",
-                         "required_experience_Not Applicable":   "req_exp_not_applicable",
-                         
-                         "employment_type_Contract":             "emp_type_contract",
-                         "employment_type_Full-time":            "emp_type_full_time",
-                         "employment_type_Other":                "emp_type_other",
-                         "employment_type_Part-time":            "emp_type_part_time",
-                         "employment_type_Temporary":            "emp_type_temp",                         
-                         })
+    DATA=DATA.rename(columns={"Information Technology":  "func_IT",
+                              "Sales":                   "func_sales",
+                              "Engineering":             "func_engineering",
+                              "Customer Service":        "func_customer_serv",
+                              "Marketing":               "func_marketing",
+                              "Administrative":          "func_admin",
+                              "Other":                   "func_other",
+                              "Health Care Provider":    "func_healthcare",
+                              "Management":              "func_management",
+                              "Design":                  "func_design"
+                              })
+    
+    #############################################
+    ### CONVERT required_education TO DUMMIES ###
+    #############################################  
+    
+    # Only do so for the most frequent values. Need to create 'other' and blank categories.
+    EDUCATION_DUMMIES = pd.get_dummies(DATA.required_education)[["Bachelor's Degree", 'High School or equivalent',
+                                                                 'Unspecified', "Master's Degree", "Associate Degree",
+                                                                 "Certification", "Some College Coursework Completed"]]
+    
+    EDUCATION_DUMMIES=EDUCATION_DUMMIES.rename(
+            columns={"Bachelor's Degree":                    "edu_bachelors",
+                     "High School or equivalent":            "edu_high_school",
+                     "Unspecified":                          "edu_unspecified",
+                     "Master's Degree":                      "edu_masters",
+                     "Associate Degree":                     "edu_associate",
+                     "Certification":                        "edu_certification",
+                     "Some College Coursework Completed":    "edu_some_college"
+                              })    
+    
+    DATA = pd.concat([DATA, EDUCATION_DUMMIES], axis=1)
+
+    #################################################
+    ### CREATE DUMMY VARIABLES FOR NULL VARIABLES ###
+    #################################################
+    
+    DATA['company_profile_is_null']=0
+    DATA.loc[pd.isna(DATA['company_profile']), 'company_profile_is_null'] = 1
+    DATA.loc[pd.isna(DATA['company_profile']), 'company_profile'] = ""
+    
+    
+    DATA['department_is_null']=0
+    DATA.loc[pd.isna(DATA['department']), 'department_is_null'] = 1 
+    DATA.loc[pd.isna(DATA['department']), 'department'] = ""  
+    
+    DATA['company_profile_is_null']=0
+    DATA.loc[pd.isna(DATA['company_profile']), 'company_profile_is_null'] = 1
+    DATA.loc[pd.isna(DATA['company_profile']), 'company_profile'] = ""  
+
+    # only 1 missing for this one
+    #DATA['description_is_null']=0
+    #DATA.loc[pd.isna(DATA['description']), 'description_is_null'] = 1
+    DATA.loc[pd.isna(DATA['description']), 'description'] = ""
+
+    DATA['requirements_is_null']=0
+    DATA.loc[pd.isna(DATA['requirements']), 'requirements_is_null'] = 1
+    DATA.loc[pd.isna(DATA['requirements']), 'requirements'] = "" 
+    
+    DATA['benefits_is_null']=0
+    DATA.loc[pd.isna(DATA['benefits']), 'benefits_is_null'] = 1  
+    DATA.loc[pd.isna(DATA['benefits']), 'benefits'] = ""
+    
+    DATA['industry_is_null']=0
+    DATA.loc[pd.isna(DATA['industry']), 'industry_is_null'] = 1 
+    DATA.loc[pd.isna(DATA['industry']), 'industry'] = ""   
+
+    DATA['salary_range_is_null']=0
+    DATA.loc[pd.isna(DATA['salary_range']), 'salary_range_is_null'] = 1  
+    DATA.loc[pd.isna(DATA['salary_range']), 'salary_range'] = ""    
+    
+    #############################################
+    ### GENERATE BINARY BAG OF WORDS FEATURES ###
+    #############################################    
+    
+    DATA['all_text_fields_combined']= (DATA['title'] + " " + 
+                                       DATA['company_profile'] + " " + 
+                                       DATA['description'] + " " + 
+                                       DATA['requirements'] + " " + 
+                                       DATA['benefits'] + " " +
+                                       DATA['industry']
+                                       )
+    
+    VECTORIZER = CountVectorizer(binary=True, min_df=25)
+    BAG_OF_WORDS = VECTORIZER.fit_transform(DATA.all_text_fields_combined).toarray()
+    BAG_OF_WORDS_DF = pd.DataFrame(BAG_OF_WORDS, columns=list(VECTORIZER.vocabulary_.keys()))
+    BAG_OF_WORDS_DF = BAG_OF_WORDS_DF.rename(columns={"fraudulent":  "fraudulent_2"})
+    
+    #VECTORIZER.vocabulary_
+    DATA = pd.concat([DATA, BAG_OF_WORDS_DF], axis=1)    
+    
+    #####################################
+    ###  REMOVE STRING FIELDS FOR NOW ###
+    #####################################  
+    
+    # remove string fields
+    DATA = DATA.drop(columns=['job_id', 'title', 'department', 'company_profile',
+                              'description', 'requirements', 'benefits', 'industry',
+                              'all_text_fields_combined'])
+    
+    #################################################
+    ### DROP COLUMNS CONVERTED TO DUMMY VARIABLES ###
+    #################################################
+    
+    DATA = DATA.drop(columns=['salary_range', 'required_experience', 'employment_type', 
+                              'function', 'required_education', 'city', 'country', 
+                              'state', 'location', 'low_salary_range', 'high_salary_range'])  
+    
+    
+    # need to think about this
+    DATA.fillna(0)  
     
     return DATA
 
@@ -219,9 +436,9 @@ def GET_ACCURACY_RATE(Y_HAT_VECTOR, Y_VECTOR, PRINT_ACCURACY_RATE):
     
     for x in range(Y_VECTOR_LEN):
         if Y_HAT_VECTOR[x]==1  and Y_VECTOR[x]==1: TP += 1        
-        if Y_HAT_VECTOR[x]==1  and Y_VECTOR[x]==-1: FP += 1
-        if Y_HAT_VECTOR[x]==-1 and Y_VECTOR[x]==-1: TN += 1
-        if Y_HAT_VECTOR[x]==-1 and Y_VECTOR[x]==1: FN += 1        
+        if Y_HAT_VECTOR[x]==1  and Y_VECTOR[x]==0: FP += 1
+        if Y_HAT_VECTOR[x]==0 and Y_VECTOR[x]==0: TN += 1
+        if Y_HAT_VECTOR[x]==0 and Y_VECTOR[x]==1: FN += 1        
         
     ACCURACY  = (TP+TN)/Y_HAT_VECTOR_LEN*100
     RECALL    = TP/(TP+FN)*100
@@ -236,7 +453,8 @@ def GET_ACCURACY_RATE(Y_HAT_VECTOR, Y_VECTOR, PRINT_ACCURACY_RATE):
        
     return ACCURACY
 ###############################################################################
-
+###############################################################################
+    
 #################
 ### READ DATA ###
 #################
@@ -247,14 +465,13 @@ DATA = READ_DATA(DIR, FILENAME, SAMPLE_SIZE)
 ### CLEAN DATA ###
 ##################
 
-DATA = CLEAN_DATA(DATA)
+CLEANED_DATA = CLEAN_DATA(DATA)
 
-#DATA.low_salary_range.sort_values().unique()
 ############################
 ### TRAIN/DEV/TEST SPLIT ###
 ############################
 
-TRAIN_DATA, DEV_DATA, TEST_DATA = TRAIN_DEV_TEST_SPLIT(DATA, DEV_SHARE, TEST_SHARE)
+TRAIN_DATA, DEV_DATA, TEST_DATA = TRAIN_DEV_TEST_SPLIT(CLEANED_DATA, DEV_SHARE, TEST_SHARE)
 
 TRAIN_DATA_X = TRAIN_DATA.drop(columns=['fraudulent'])
 TRAIN_DATA_Y = TRAIN_DATA.fraudulent
@@ -269,37 +486,53 @@ TEST_DATA_Y = TEST_DATA.fraudulent
 ### DATA EXPLORATION ###
 ########################
 
-### VARIABLES ###
-# job_id',               <-- junk
-# 'title',               <-- string field (1490 different values)
-# 'location',            <-- tuple (country, state, city)
-# 'department',          <-- string field (271 different values)
-# 'salary_range',        <-- string field
-# 'company_profile',     <-- string field
-# 'description',         <-- string field
-# 'requirements',        <-- string field
-# 'benefits',            <-- string field
-# 'telecommuting',       <-- binary
-# 'has_company_logo',    <-- binary
-# 'has_questions',       <-- binary
-# 'employment_type',     <-- categorical (6 different values)
-# 'required_experience', <-- categorical (8 different values)
-# 'required_education',  <-- categorical (13 different values)
-# 'industry',            <-- string field (98 different values)
-# 'function',            <-- categorical (38 different values)
-# 'fraudulent'           <-- response variable
 
-print(TRAIN_DATA.columns)
-print(TRAIN_DATA.shape)
-DATA.function.value_counts()
 
 #############################
 ### GENERATE WORD VECTORS ###
 #############################
 
-WORD_VECTOR = tokenize_and_vectorize(TRAIN_DATA.description)
-WORD_VECTOR_TRUNCATED = pad_trunc(data = WORD_VECTOR, max_length = 300)
+#WORD_VECTOR = tokenize_and_vectorize(TRAIN_DATA.description)
+#WORD_VECTOR_TRUNCATED = pad_trunc(data = WORD_VECTOR, max_length = 300)
 
+
+
+
+
+LOGISTIC_REG = (LogisticRegression(penalty='l2', solver='lbfgs').
+                fit(TRAIN_DATA_X, TRAIN_DATA_Y))
+
+# Generate the predicted values
+Y_HAT = (LOGISTIC_REG.predict(DEV_DATA_X))
+GET_ACCURACY_RATE(Y_HAT, DEV_DATA_Y.values, True)
+COEF = LOGISTIC_REG.coef_
+COEF_DF = pd.DataFrame(COEF, columns=DEV_DATA_X.columns)
+
+
+
+
+
+def plot_coefficients(classifier, feature_names, top_features=20):
+    coef = classifier.coef_.ravel()
+    top_positive_coefficients = np.argsort(coef)[-top_features:]
+    top_negative_coefficients = np.argsort(coef)[:top_features]
+    top_coefficients = np.hstack([top_negative_coefficients, top_positive_coefficients])
+    # create plot
+    plt.figure(figsize=(15, 5))
+    #colors = [‘red’ if c < 0 else ‘blue’ for c in coef[top_coefficients]]
+    plt.bar(np.arange(2 * top_features), coef[top_coefficients], color='blue')
+    feature_names = np.array(feature_names)
+    #plt.xticks(np.arange(1, 1 + 2 * top_features),feature_names[top_coefficients], rotation=60, ha=’right’)
+    plt.xticks(np.arange(1, 1+2 * top_features), feature_names[top_coefficients], rotation=90)
+    plt.show()
+
+plot_coefficients(LOGISTIC_REG, TRAIN_DATA_X.columns, 25)
+
+
+
+A = (LOGISTIC_REG.predict_proba(DEV_DATA_X))
+x= A[:, 1]
+a = pd.DataFrame(x, columns=['a']).sort_values('a', ascending=False)
 
 ###############################################################################
 
