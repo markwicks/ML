@@ -125,7 +125,7 @@ def READ_DATA(DIR, FILENAME, SAMPLE_SIZE):
 #########################
 ### CLEAN THE DATASET ###
 #########################
-def CLEAN_DATA(DATA):
+def CLEAN_DATA(DATA, BAG_OF_WORDS):
 
 ### VARIABLES ###
 # job_id',               <-- junk
@@ -146,6 +146,10 @@ def CLEAN_DATA(DATA):
 # 'industry',            <-- string field (98 different values)
 # 'function',            <-- categorical (38 different values)  converted to dummies
 # 'fraudulent'           <-- response variable    
+    
+    print("")
+    print(" --> Cleaning data")
+    print("")
      
     ###############################################
     ### SPLIT LOCATION INTO COUNTY, STATE, CITY ###
@@ -182,6 +186,19 @@ def CLEAN_DATA(DATA):
         DATA.country.values[x] = COUNTRY.replace("  ", " ")
         DATA.state.values[x]   = STATE.replace("  ", " ") 
         DATA.city.values[x]    = CITY.replace("  ", " ")
+
+        
+    ###########################################
+    ### CONVERT COUNTRY VARIABLE TO DUMMIES ###
+    ###########################################
+    
+    COUNTRY_DUMMIES = pd.get_dummies(DATA[['country']])[['country_US', "country_",
+                                                         "country_GB", "country_GR", 
+                                                         "country_CA", "country_DE", 
+                                                         "country_NZ", "country_IN", 
+                                                         "country_AU"]] 
+    
+    DATA = pd.concat([DATA, COUNTRY_DUMMIES], axis=1)     
         
     ########################################
     ### CONVERT CITY VARIABLE TO DUMMIES ###
@@ -349,9 +366,31 @@ def CLEAN_DATA(DATA):
     DATA.loc[pd.isna(DATA['industry']), 'industry_is_null'] = 1 
     DATA.loc[pd.isna(DATA['industry']), 'industry'] = ""   
 
-    DATA['salary_range_is_null']=0
-    DATA.loc[pd.isna(DATA['salary_range']), 'salary_range_is_null'] = 1  
-    DATA.loc[pd.isna(DATA['salary_range']), 'salary_range'] = ""    
+    DATA['low_salary_range_is_null']=0
+    DATA.loc[pd.isna(DATA['low_salary_range']), 'low_salary_range_is_null'] = 1  
+    DATA.loc[pd.isna(DATA['low_salary_range']), 'low_salary_range'] = 0 
+
+    DATA['high_salary_range_is_null']=0
+    DATA.loc[pd.isna(DATA['high_salary_range']), 'high_salary_range_is_null'] = 1  
+    DATA.loc[pd.isna(DATA['high_salary_range']), 'high_salary_range'] = 0     
+    
+    DATA['country_is_null']=0
+    DATA.loc[pd.isna(DATA['country']), 'country_is_null'] = 1 
+    
+    DATA['city_is_null']=0
+    DATA.loc[pd.isna(DATA['city']), 'city_is_null'] = 1 
+    
+    
+    ###################################################
+    ### GENERATE VARIABLES FOR LENGTH OF TEXT FIELD ###
+    ###################################################
+
+    DATA['title_length']           = DATA.title.str.len().fillna(1)
+    DATA['company_profile_length'] = DATA.company_profile.str.len().fillna(1)  
+    DATA['description_length']     = np.log(DATA.description.str.len().fillna(1)+ 0.0000001) # take log
+    DATA['requirements_length']    = np.log(DATA.requirements.str.len().fillna(1)+ 0.0000001) # take log
+    DATA['benefits_length']        = np.log(DATA.benefits.str.len().fillna(1)+ 0.0000001)  # take log
+    DATA['industry_length']        = DATA.industry.str.len().fillna(1)
     
     #############################################
     ### GENERATE BINARY BAG OF WORDS FEATURES ###
@@ -364,14 +403,15 @@ def CLEAN_DATA(DATA):
                                        DATA['benefits'] + " " +
                                        DATA['industry']
                                        )
+ 
+    if BAG_OF_WORDS:
+       VECTORIZER = CountVectorizer(binary=True, min_df=30)
+       BAG_OF_WORDS = VECTORIZER.fit_transform(DATA.all_text_fields_combined).toarray()
+       BAG_OF_WORDS_DF = pd.DataFrame(BAG_OF_WORDS, columns=list(VECTORIZER.vocabulary_.keys()))
+       BAG_OF_WORDS_DF = BAG_OF_WORDS_DF.rename(columns={"fraudulent":  "fraudulent_2"})
     
-    VECTORIZER = CountVectorizer(binary=True, min_df=25)
-    BAG_OF_WORDS = VECTORIZER.fit_transform(DATA.all_text_fields_combined).toarray()
-    BAG_OF_WORDS_DF = pd.DataFrame(BAG_OF_WORDS, columns=list(VECTORIZER.vocabulary_.keys()))
-    BAG_OF_WORDS_DF = BAG_OF_WORDS_DF.rename(columns={"fraudulent":  "fraudulent_2"})
-    
-    #VECTORIZER.vocabulary_
-    DATA = pd.concat([DATA, BAG_OF_WORDS_DF], axis=1)    
+       #VECTORIZER.vocabulary_
+       DATA = pd.concat([DATA, BAG_OF_WORDS_DF], axis=1)    
     
     #####################################
     ###  REMOVE STRING FIELDS FOR NOW ###
@@ -392,7 +432,7 @@ def CLEAN_DATA(DATA):
     
     
     # need to think about this
-    DATA.fillna(0)  
+    #DATA.fillna(0)  
     
     return DATA
 
@@ -453,6 +493,33 @@ def GET_ACCURACY_RATE(Y_HAT_VECTOR, Y_VECTOR, PRINT_ACCURACY_RATE):
        
     return ACCURACY
 ###############################################################################
+def plot_coefficients(classifier, feature_names, top_features=20):
+    coef = classifier.coef_.ravel()
+    top_positive_coefficients = np.argsort(coef)[-top_features:]
+    top_negative_coefficients = np.argsort(coef)[:top_features]
+    top_coefficients = np.hstack([top_negative_coefficients, top_positive_coefficients])
+    # create plot
+    plt.figure(figsize=(15, 5))
+    #colors = [‘red’ if c < 0 else ‘blue’ for c in coef[top_coefficients]]
+    plt.bar(np.arange(2 * top_features), coef[top_coefficients], color='blue')
+    feature_names = np.array(feature_names)
+    #plt.xticks(np.arange(1, 1 + 2 * top_features),feature_names[top_coefficients], rotation=60, ha=’right’)
+    plt.xticks(np.arange(1, 1+2 * top_features), feature_names[top_coefficients], rotation=90)
+    plt.show()
+###############################################################################
+def LOGISTIC_REGRESSION(TRAIN_DATA_X, TRAIN_DATA_Y, DEV_DATA_X, DEV_DATA_Y):
+    
+    LOGISTIC_REG = (LogisticRegression(penalty='l2', solver='lbfgs', max_iter=250).
+                    fit(TRAIN_DATA_X, TRAIN_DATA_Y))
+
+    # Generate the predicted values
+    Y_HAT = (LOGISTIC_REG.predict(DEV_DATA_X))
+    GET_ACCURACY_RATE(Y_HAT, DEV_DATA_Y.values, True)
+    
+    COEF = LOGISTIC_REG.coef_
+    COEF_DF = pd.DataFrame(COEF, columns=DEV_DATA_X.columns)
+    plot_coefficients(LOGISTIC_REG, TRAIN_DATA_X.columns, 25)    
+    
 ###############################################################################
     
 #################
@@ -465,7 +532,7 @@ DATA = READ_DATA(DIR, FILENAME, SAMPLE_SIZE)
 ### CLEAN DATA ###
 ##################
 
-CLEANED_DATA = CLEAN_DATA(DATA)
+CLEANED_DATA = CLEAN_DATA(DATA, BAG_OF_WORDS=True)
 
 ############################
 ### TRAIN/DEV/TEST SPLIT ###
@@ -482,9 +549,35 @@ DEV_DATA_Y = DEV_DATA.fraudulent
 TEST_DATA_X = TEST_DATA.drop(columns=['fraudulent'])
 TEST_DATA_Y = TEST_DATA.fraudulent
 
+#################
+### MODELLING ###
+#################
+
+LOGISTIC_REGRESSION(TRAIN_DATA_X, TRAIN_DATA_Y, DEV_DATA_X, DEV_DATA_Y)
+
 ########################
 ### DATA EXPLORATION ###
 ########################
+
+NOT_FAKE = DATA[DATA['fraudulent']==0]
+
+NOT_FAKE.city.value_counts()
+NOT_FAKE.employment_type.value_counts()
+NOT_FAKE.industry.value_counts()
+NOT_FAKE.has_company_logo.value_counts()
+NOT_FAKE.required_education.value_counts()
+
+############
+### FAKE ###
+############
+
+FAKE = DATA[DATA['fraudulent']==1]
+
+FAKE.city.value_counts()
+FAKE.employment_type.value_counts()
+FAKE.industry.value_counts()
+FAKE.has_company_logo.value_counts()
+FAKE.required_education.value_counts()
 
 
 
@@ -499,40 +592,8 @@ TEST_DATA_Y = TEST_DATA.fraudulent
 
 
 
-LOGISTIC_REG = (LogisticRegression(penalty='l2', solver='lbfgs').
-                fit(TRAIN_DATA_X, TRAIN_DATA_Y))
-
-# Generate the predicted values
-Y_HAT = (LOGISTIC_REG.predict(DEV_DATA_X))
-GET_ACCURACY_RATE(Y_HAT, DEV_DATA_Y.values, True)
-COEF = LOGISTIC_REG.coef_
-COEF_DF = pd.DataFrame(COEF, columns=DEV_DATA_X.columns)
 
 
-
-
-
-def plot_coefficients(classifier, feature_names, top_features=20):
-    coef = classifier.coef_.ravel()
-    top_positive_coefficients = np.argsort(coef)[-top_features:]
-    top_negative_coefficients = np.argsort(coef)[:top_features]
-    top_coefficients = np.hstack([top_negative_coefficients, top_positive_coefficients])
-    # create plot
-    plt.figure(figsize=(15, 5))
-    #colors = [‘red’ if c < 0 else ‘blue’ for c in coef[top_coefficients]]
-    plt.bar(np.arange(2 * top_features), coef[top_coefficients], color='blue')
-    feature_names = np.array(feature_names)
-    #plt.xticks(np.arange(1, 1 + 2 * top_features),feature_names[top_coefficients], rotation=60, ha=’right’)
-    plt.xticks(np.arange(1, 1+2 * top_features), feature_names[top_coefficients], rotation=90)
-    plt.show()
-
-plot_coefficients(LOGISTIC_REG, TRAIN_DATA_X.columns, 25)
-
-
-
-A = (LOGISTIC_REG.predict_proba(DEV_DATA_X))
-x= A[:, 1]
-a = pd.DataFrame(x, columns=['a']).sort_values('a', ascending=False)
 
 ###############################################################################
 
