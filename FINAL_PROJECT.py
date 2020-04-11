@@ -10,7 +10,6 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 from sklearn.feature_extraction.text import CountVectorizer
-from sklearn.naive_bayes import MultinomialNB
 #from sklearn.metrics import classification_report
 from sklearn.model_selection import cross_validate
 from sklearn.linear_model import LogisticRegression
@@ -79,6 +78,8 @@ def tokenize_and_vectorize(input_data):
     return vectorized_data
 
 ###############################################################################
+# Input is numpy array of strings
+# Output is a list of word vectors, indexed by input sentence number
 def pad_trunc(data, max_length):
     
     new_data = []
@@ -104,6 +105,22 @@ def pad_trunc(data, max_length):
         new_data.append(temp)
         
     return new_data
+###############################################################################
+# Input is numpy array of strings
+# Output is a list of word vectors, indexed by input sentence number
+def pad_trunc_2(data):
+    
+    max_length=100
+    
+    n,m = data.shape
+    
+    m_diff = max_length-m
+    
+    pad = np.zeros([n, m_diff])
+    
+    new_data = pd.concat([pd.DataFrame(data), pd.DataFrame(pad)], axis=1).values
+     
+    return new_data
 
 ###############################################################################
 #################
@@ -125,7 +142,7 @@ def READ_DATA(DIR, FILENAME, SAMPLE_SIZE):
 #########################
 ### CLEAN THE DATASET ###
 #########################
-def CLEAN_DATA(DATA, BAG_OF_WORDS):
+def CLEAN_DATA(DATA, BAG_OF_WORDS, INCLUDE_TEXT_VARS):
 
 ### VARIABLES ###
 # job_id',               <-- junk
@@ -396,22 +413,24 @@ def CLEAN_DATA(DATA, BAG_OF_WORDS):
     ### GENERATE BINARY BAG OF WORDS FEATURES ###
     #############################################    
     
-    DATA['all_text_fields_combined']= (DATA['title'] + " " + 
-                                       DATA['company_profile'] + " " + 
-                                       DATA['description'] + " " + 
-                                       DATA['requirements'] + " " + 
-                                       DATA['benefits'] + " " +
-                                       DATA['industry']
-                                       )
+    if INCLUDE_TEXT_VARS==True:
+    
+       DATA['all_text']= (DATA['title'] + " " + 
+                          DATA['company_profile'] + " " + 
+                          DATA['description'] + " " + 
+                          DATA['requirements'] + " " + 
+                          DATA['benefits'] + " " +
+                          DATA['industry']
+                          )
  
     if BAG_OF_WORDS:
-       VECTORIZER = CountVectorizer(binary=True, min_df=30)
-       BAG_OF_WORDS = VECTORIZER.fit_transform(DATA.all_text_fields_combined).toarray()
-       BAG_OF_WORDS_DF = pd.DataFrame(BAG_OF_WORDS, columns=list(VECTORIZER.vocabulary_.keys()))
-       BAG_OF_WORDS_DF = BAG_OF_WORDS_DF.rename(columns={"fraudulent":  "fraudulent_2"})
+          VECTORIZER = CountVectorizer(binary=True, min_df=30)
+          BAG_OF_WORDS = VECTORIZER.fit_transform(DATA.all_text_fields_combined).toarray()
+          BAG_OF_WORDS_DF = pd.DataFrame(BAG_OF_WORDS, columns=list(VECTORIZER.vocabulary_.keys()))
+          BAG_OF_WORDS_DF = BAG_OF_WORDS_DF.rename(columns={"fraudulent":  "fraudulent_2"})
     
-       #VECTORIZER.vocabulary_
-       DATA = pd.concat([DATA, BAG_OF_WORDS_DF], axis=1)    
+          #VECTORIZER.vocabulary_
+          DATA = pd.concat([DATA, BAG_OF_WORDS_DF], axis=1)    
     
     #####################################
     ###  REMOVE STRING FIELDS FOR NOW ###
@@ -419,8 +438,7 @@ def CLEAN_DATA(DATA, BAG_OF_WORDS):
     
     # remove string fields
     DATA = DATA.drop(columns=['job_id', 'title', 'department', 'company_profile',
-                              'description', 'requirements', 'benefits', 'industry',
-                              'all_text_fields_combined'])
+                              'description', 'requirements', 'benefits', 'industry'])
     
     #################################################
     ### DROP COLUMNS CONVERTED TO DUMMY VARIABLES ###
@@ -430,10 +448,6 @@ def CLEAN_DATA(DATA, BAG_OF_WORDS):
                               'function', 'required_education', 'city', 'country', 
                               'state', 'location', 'low_salary_range', 'high_salary_range'])  
     
-    
-    # need to think about this
-    #DATA.fillna(0)  
-    
     return DATA
 
 ###############################################################################
@@ -442,6 +456,7 @@ def CLEAN_DATA(DATA, BAG_OF_WORDS):
 #######################################
 def TRAIN_DEV_TEST_SPLIT(INPUT_DATA, DEV_SHARE, TEST_SHARE):
         
+    # Sort the data
     INPUT_DATA = INPUT_DATA.sample(frac=1, random_state=1)
     
     # Use the test_share and dev_share variables hard-coded at the top to 
@@ -521,7 +536,87 @@ def LOGISTIC_REGRESSION(TRAIN_DATA_X, TRAIN_DATA_Y, DEV_DATA_X, DEV_DATA_Y):
     plot_coefficients(LOGISTIC_REG, TRAIN_DATA_X.columns, 25)    
     
 ###############################################################################
+def run_neural_network(X_TRAIN_DATA, X_DEV_DATA, Y_TRAIN, Y_DEV, 
+                       num_neurons, max_length, embedding_length, num_epochs):
     
+    print(" --> Running neural network")
+    print("")
+
+    ###################
+    ### FORMAT DATA ###
+    ###################
+    
+    # convert each text string to a sequence of word vectors 
+    # Each observation is a vector of vectors.
+    X_TRAIN_VECTORIZED = tokenize_and_vectorize(X_TRAIN_DATA.all_text.values)
+    X_DEV_VECTORIZED   = tokenize_and_vectorize(X_DEV_DATA.all_text.values)
+
+    ##################################
+    ### FORMAT THE INPUT DATA SETS ###
+    ##################################
+
+    # Crop if in excess of max_length, and pad with zeros if shorter than max_length
+    X_TRAIN_PADDED_DATA = pad_trunc(X_TRAIN_VECTORIZED, max_length)
+    X_DEV_PADDED_DATA   = pad_trunc(X_DEV_VECTORIZED, max_length)
+
+    # First dimension is number of observations in dataset, second dimension
+    # is max number of words, and third is the embedding length
+    # Each observation therefore has input dimension (300, 100)
+    X_TRAIN_PADDED_FORMATTED_DATA = np.reshape(X_TRAIN_PADDED_DATA, 
+                                              (len(X_TRAIN_PADDED_DATA), 
+                                               max_length, 
+                                               embedding_length))
+
+    X_DEV_PADDED_FORMATTED_DATA = np.reshape(X_DEV_PADDED_DATA, 
+                                            (len(X_DEV_PADDED_DATA), 
+                                             max_length, 
+                                             embedding_length))
+    
+    ###########################
+    ### CREATE LSTM NETWORK ###
+    ###########################
+
+    model = Sequential()
+    
+    model.add(LSTM(num_neurons, 
+                   return_sequences = True, 
+                   input_shape = (max_length, embedding_length)))
+
+    
+    model.add(Dropout(0.2))
+    model.add(Flatten())
+    model.add(Dense(1, activation='sigmoid'))
+    model.compile('rmsprop', 'binary_crossentropy', 
+                  metrics = ['accuracy',
+                             keras_metrics.precision(), 
+                             keras_metrics.recall()])
+    model.summary()
+
+    ##########################
+    ### TRAIN LSTM NETWORK ###
+    ##########################
+
+    model.fit(X_TRAIN_PADDED_FORMATTED_DATA, 
+              Y_TRAIN,
+              batch_size = 32,
+              epochs = num_epochs,
+              validation_data = (X_DEV_PADDED_FORMATTED_DATA, 
+                                 Y_DEV.values))
+    
+    # Value between 0 and 1.
+    PRED = model.predict(X_DEV_PADDED_FORMATTED_DATA)
+
+    YHAT = np.where(PRED > 0.5, 1, 0)
+    
+    GET_ACCURACY_RATE(YHAT, DEV_DATA_Y.values, True)
+ 
+    #######################
+    ### RUN ON TEST SET ###
+    #######################  
+    
+
+    
+###############################################################################   
 #################
 ### READ DATA ###
 #################
@@ -532,7 +627,7 @@ DATA = READ_DATA(DIR, FILENAME, SAMPLE_SIZE)
 ### CLEAN DATA ###
 ##################
 
-CLEANED_DATA = CLEAN_DATA(DATA, BAG_OF_WORDS=True)
+CLEANED_DATA = CLEAN_DATA(DATA, BAG_OF_WORDS=False, INCLUDE_TEXT_VARS=True)
 
 ############################
 ### TRAIN/DEV/TEST SPLIT ###
@@ -554,6 +649,15 @@ TEST_DATA_Y = TEST_DATA.fraudulent
 #################
 
 LOGISTIC_REGRESSION(TRAIN_DATA_X, TRAIN_DATA_Y, DEV_DATA_X, DEV_DATA_Y)
+
+run_neural_network(X_TRAIN_DATA     = TRAIN_DATA_X, 
+                   X_DEV_DATA       = DEV_DATA_X, 
+                   Y_TRAIN          = TRAIN_DATA_Y,
+                   Y_DEV            = DEV_DATA_Y,
+                   num_neurons      = 32, 
+                   max_length       = 300, 
+                   embedding_length = 100,
+                   num_epochs       = 5)
 
 ########################
 ### DATA EXPLORATION ###
@@ -596,21 +700,3 @@ FAKE.required_education.value_counts()
 
 
 ###############################################################################
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
