@@ -9,21 +9,20 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
+from sklearn.linear_model import Lasso
 from sklearn.feature_extraction.text import CountVectorizer
-#from sklearn.metrics import classification_report
-from sklearn.model_selection import cross_validate
 from sklearn.linear_model import LogisticRegression
-from sklearn import svm
+#from sklearn import svm
 
 from nltk.tokenize import TreebankWordTokenizer
 from keras.models import Sequential
-from keras.layers import Dense, Dropout, Flatten, LSTM, SimpleRNN
+from keras.layers import Dense, Dropout, Flatten, LSTM
 import keras_metrics
 
 import gensim.downloader as api
-import string
 import math
 import sys
+import random
 
 ######################
 ### SET PARAMETERS ###
@@ -40,6 +39,8 @@ np.set_printoptions(suppress=True)
 SAMPLE_SIZE = 1 # fraction of dataset to sample
 DEV_SHARE  = 0.15 # fraction of dataset for dev set
 TEST_SHARE = 0.15 # fraction of dataset for test set
+
+random.seed(30)
 
 ###############################################################################
 ###############################################################################
@@ -411,27 +412,28 @@ def CLEAN_DATA(DATA, BAG_OF_WORDS, INCLUDE_TEXT_VARS):
     
     #############################################
     ### GENERATE BINARY BAG OF WORDS FEATURES ###
-    #############################################    
+    #############################################   
     
-    if INCLUDE_TEXT_VARS==True:
+    DATA['all_text']= (DATA['title'] + " " + 
+                       DATA['company_profile'] + " " + 
+                       DATA['description'] + " " + 
+                       DATA['requirements'] + " " + 
+                       DATA['benefits'] + " " +
+                       DATA['industry']
+                       ) 
     
-       DATA['all_text']= (DATA['title'] + " " + 
-                          DATA['company_profile'] + " " + 
-                          DATA['description'] + " " + 
-                          DATA['requirements'] + " " + 
-                          DATA['benefits'] + " " +
-                          DATA['industry']
-                          )
- 
     if BAG_OF_WORDS:
           VECTORIZER = CountVectorizer(binary=True, min_df=30)
-          BAG_OF_WORDS = VECTORIZER.fit_transform(DATA.all_text_fields_combined).toarray()
+          BAG_OF_WORDS = VECTORIZER.fit_transform(DATA.all_text).toarray()
           BAG_OF_WORDS_DF = pd.DataFrame(BAG_OF_WORDS, columns=list(VECTORIZER.vocabulary_.keys()))
           BAG_OF_WORDS_DF = BAG_OF_WORDS_DF.rename(columns={"fraudulent":  "fraudulent_2"})
     
           #VECTORIZER.vocabulary_
-          DATA = pd.concat([DATA, BAG_OF_WORDS_DF], axis=1)    
-    
+          DATA = pd.concat([DATA, BAG_OF_WORDS_DF], axis=1) 
+          
+    if INCLUDE_TEXT_VARS==False:
+        DATA=DATA.drop(columns=['all_text'])
+       
     #####################################
     ###  REMOVE STRING FIELDS FOR NOW ###
     #####################################  
@@ -508,32 +510,45 @@ def GET_ACCURACY_RATE(Y_HAT_VECTOR, Y_VECTOR, PRINT_ACCURACY_RATE):
        
     return ACCURACY
 ###############################################################################
-def plot_coefficients(classifier, feature_names, top_features=20):
+def plot_coefficients(classifier, feature_names, top_features=10):
+    
     coef = classifier.coef_.ravel()
     top_positive_coefficients = np.argsort(coef)[-top_features:]
     top_negative_coefficients = np.argsort(coef)[:top_features]
     top_coefficients = np.hstack([top_negative_coefficients, top_positive_coefficients])
-    # create plot
-    plt.figure(figsize=(15, 5))
-    #colors = [‘red’ if c < 0 else ‘blue’ for c in coef[top_coefficients]]
-    plt.bar(np.arange(2 * top_features), coef[top_coefficients], color='blue')
-    feature_names = np.array(feature_names)
-    #plt.xticks(np.arange(1, 1 + 2 * top_features),feature_names[top_coefficients], rotation=60, ha=’right’)
-    plt.xticks(np.arange(1, 1+2 * top_features), feature_names[top_coefficients], rotation=90)
+    
+    
+    plt.rcdefaults()
+    fig, ax = plt.subplots()
+    
+    ax.barh(y          = np.arange(2 * top_features), 
+             width      = coef[top_coefficients], 
+             color      = ['red', 'red', 'red', 'red', 'red',
+                           'red', 'red', 'red', 'red', 'red',
+                           'blue', 'blue', 'blue', 'blue', 'blue',
+                           'blue', 'blue', 'blue', 'blue', 'blue'
+                           ],
+             tick_label = feature_names[top_coefficients])
+    
+    ax.set_ylabel('Variable')
+    ax.set_title('Logistic Regression (with l-1 reg) Weights')
+    
     plt.show()
+    
 ###############################################################################
 def LOGISTIC_REGRESSION(TRAIN_DATA_X, TRAIN_DATA_Y, DEV_DATA_X, DEV_DATA_Y):
     
-    LOGISTIC_REG = (LogisticRegression(penalty='l2', solver='lbfgs', max_iter=250).
+    TRAIN_DATA_X = TRAIN_DATA_X.drop(columns=['all_text'])
+    DEV_DATA_X   = DEV_DATA_X.drop(columns=['all_text'])
+    
+    LOGISTIC_REG = (LogisticRegression(penalty='l1', max_iter=200).
                     fit(TRAIN_DATA_X, TRAIN_DATA_Y))
 
     # Generate the predicted values
     Y_HAT = (LOGISTIC_REG.predict(DEV_DATA_X))
     GET_ACCURACY_RATE(Y_HAT, DEV_DATA_Y.values, True)
     
-    COEF = LOGISTIC_REG.coef_
-    COEF_DF = pd.DataFrame(COEF, columns=DEV_DATA_X.columns)
-    plot_coefficients(LOGISTIC_REG, TRAIN_DATA_X.columns, 25)    
+    plot_coefficients(LOGISTIC_REG, TRAIN_DATA_X.columns, 10)    
     
 ###############################################################################
 def run_neural_network(X_TRAIN_DATA, X_DEV_DATA, Y_TRAIN, Y_DEV, 
@@ -541,7 +556,15 @@ def run_neural_network(X_TRAIN_DATA, X_DEV_DATA, Y_TRAIN, Y_DEV,
     
     print(" --> Running neural network")
     print("")
-
+    
+    NROWS_TRAIN, NCOLS = X_TRAIN_DATA.shape
+    NROWS_DEV, NCOLS   = X_DEV_DATA.shape
+    
+    ###########################################################################
+    ###########################################################################
+    ###########################################################################
+    # Format text features
+    
     ###################
     ### FORMAT DATA ###
     ###################
@@ -556,20 +579,58 @@ def run_neural_network(X_TRAIN_DATA, X_DEV_DATA, Y_TRAIN, Y_DEV,
     ##################################
 
     # Crop if in excess of max_length, and pad with zeros if shorter than max_length
+    # note that these are lists
     X_TRAIN_PADDED_DATA = pad_trunc(X_TRAIN_VECTORIZED, max_length)
     X_DEV_PADDED_DATA   = pad_trunc(X_DEV_VECTORIZED, max_length)
+    
+    ###########################################################################
+    ###########################################################################
+    ###########################################################################
+    # Format non-text feature vectors
+    
+    X_TRAIN_DATA_NON_TEXT = X_TRAIN_DATA.drop(columns=['all_text'])
+    X_DEV_DATA_NON_TEXT   = X_DEV_DATA.drop(columns=['all_text'])
+    
+    
+    X_TRAIN_DATA_NON_TEXT_PADDED = np.zeros([NROWS_TRAIN, embedding_length])
+    X_DEV_DATA_NON_TEXT_PADDED   = np.zeros([NROWS_DEV, embedding_length])
+    
+    N = embedding_length-NCOLS+1
+    
+    for ROW in range(NROWS_TRAIN):
+        #print(" --> " + str(ROW))
+        X_TRAIN_DATA_NON_TEXT_PADDED[ROW] = np.pad(X_TRAIN_DATA_NON_TEXT.values[ROW], (0, N), 'constant')
+    
+    for ROW in range(NROWS_DEV):
+        #print(" --> " + str(ROW))    
+        X_DEV_DATA_NON_TEXT_PADDED[ROW]   = np.pad(X_DEV_DATA_NON_TEXT.values[ROW], (0, N), 'constant')
+        
+    ###########################################################################
+    ###########################################################################
+    ###########################################################################
+    # Combine word vectors with non-word vector features
+    
+    for ROW in range(NROWS_TRAIN):
+        X_TRAIN_PADDED_DATA[ROW].append(X_TRAIN_DATA_NON_TEXT_PADDED[ROW].tolist())
+        
+    for ROW in range(NROWS_DEV):
+        X_DEV_PADDED_DATA[ROW].append(X_DEV_DATA_NON_TEXT_PADDED[ROW].tolist())
+        
+    ###########################################################################
+    ###########################################################################
+    ###########################################################################    
 
     # First dimension is number of observations in dataset, second dimension
     # is max number of words, and third is the embedding length
     # Each observation therefore has input dimension (300, 100)
     X_TRAIN_PADDED_FORMATTED_DATA = np.reshape(X_TRAIN_PADDED_DATA, 
                                               (len(X_TRAIN_PADDED_DATA), 
-                                               max_length, 
+                                               max_length+1, 
                                                embedding_length))
 
     X_DEV_PADDED_FORMATTED_DATA = np.reshape(X_DEV_PADDED_DATA, 
                                             (len(X_DEV_PADDED_DATA), 
-                                             max_length, 
+                                             max_length+1, 
                                              embedding_length))
     
     ###########################
@@ -580,7 +641,7 @@ def run_neural_network(X_TRAIN_DATA, X_DEV_DATA, Y_TRAIN, Y_DEV,
     
     model.add(LSTM(num_neurons, 
                    return_sequences = True, 
-                   input_shape = (max_length, embedding_length)))
+                   input_shape = (max_length+1, embedding_length)))
 
     
     model.add(Dropout(0.2))
@@ -609,25 +670,96 @@ def run_neural_network(X_TRAIN_DATA, X_DEV_DATA, Y_TRAIN, Y_DEV,
     YHAT = np.where(PRED > 0.5, 1, 0)
     
     GET_ACCURACY_RATE(YHAT, DEV_DATA_Y.values, True)
- 
-    #######################
-    ### RUN ON TEST SET ###
-    #######################  
-    
-
     
 ###############################################################################   
+def LASSO_FEATURE_RANKING():
+    
+    from sklearn.feature_selection import RFE
+    from sklearn.preprocessing import MinMaxScaler
+    import seaborn as sns
+
+
+    # Define dictionary to store our rankings
+    ranks = {}
+    # Create our function which stores the feature rankings to the ranks dictionary
+    def ranking(ranks, names, order=1):
+        minmax = MinMaxScaler()
+        ranks = minmax.fit_transform(order*np.array([ranks]).T).T[0]
+        ranks = map(lambda x: round(x,2), ranks)
+        return dict(zip(names, ranks))
+
+    lasso = Lasso()
+    rfe = RFE(lasso, n_features_to_select=1)
+    rfe.fit(TRAIN_DATA_X, TRAIN_DATA_Y)
+    
+    ranks["rank"] = ranking(list(map(float, rfe.ranking_)), 
+                            TRAIN_DATA_X.columns, 
+                            order=-1)
+    
+    DF = pd.DataFrame.from_dict(ranks).sort_values(by=['rank'], ascending=False)   
+    
+    sns.factorplot(x="rank", 
+                   #y="Feature", 
+                   data = DF, 
+                   kind="bar", 
+                   size=14, 
+                   aspect=1.9, 
+                   palette='coolwarm')
+    
+###############################################################################
+def DATA_EXPLORATION(DATA):
+
+    DATA.city.value_counts()
+    DATA.employment_type.value_counts()
+    DATA.industry.value_counts()
+    DATA.has_company_logo.value_counts()
+    DATA.required_education.value_counts()
+
+    ################
+    ### NOT FAKE ###
+    ################
+    NOT_FAKE = DATA[DATA['fraudulent']==0]
+    
+    NOT_FAKE.city.value_counts()
+    NOT_FAKE.employment_type.value_counts()
+    NOT_FAKE.industry.value_counts()
+    NOT_FAKE.has_company_logo.value_counts()
+    NOT_FAKE.required_education.value_counts()
+
+    ############
+    ### FAKE ###
+    ############
+
+    FAKE = DATA[DATA['fraudulent']==1]
+
+    FAKE.city.value_counts()
+    FAKE.employment_type.value_counts()
+    FAKE.industry.value_counts()
+    FAKE.has_company_logo.value_counts()
+    FAKE.required_education.value_counts() 
+    
+    x = FAKE.sort_values(by=['description']).description
+    
+###############################################################################   
+###############################################################################       
+    
 #################
 ### READ DATA ###
 #################
     
 DATA = READ_DATA(DIR, FILENAME, SAMPLE_SIZE)
 
+########################
+### DATA EXPLORATION ###
+########################
+
+#DATA_EXPLORATION(DATA)
+
 ##################
 ### CLEAN DATA ###
 ##################
 
-CLEANED_DATA = CLEAN_DATA(DATA, BAG_OF_WORDS=False, INCLUDE_TEXT_VARS=True)
+CLEANED_DATA = CLEAN_DATA(DATA, BAG_OF_WORDS=True, INCLUDE_TEXT_VARS=True)
 
 ############################
 ### TRAIN/DEV/TEST SPLIT ###
@@ -644,11 +776,19 @@ DEV_DATA_Y = DEV_DATA.fraudulent
 TEST_DATA_X = TEST_DATA.drop(columns=['fraudulent'])
 TEST_DATA_Y = TEST_DATA.fraudulent
 
-#################
-### MODELLING ###
-#################
+##################################################
+################# MODELLING ######################
+##################################################
+
+####################
+### LOGISTIC REG ###
+####################
 
 LOGISTIC_REGRESSION(TRAIN_DATA_X, TRAIN_DATA_Y, DEV_DATA_X, DEV_DATA_Y)
+
+################
+### LSTM REG ###
+################
 
 run_neural_network(X_TRAIN_DATA     = TRAIN_DATA_X, 
                    X_DEV_DATA       = DEV_DATA_X, 
@@ -657,46 +797,7 @@ run_neural_network(X_TRAIN_DATA     = TRAIN_DATA_X,
                    num_neurons      = 32, 
                    max_length       = 300, 
                    embedding_length = 100,
-                   num_epochs       = 5)
-
-########################
-### DATA EXPLORATION ###
-########################
-
-NOT_FAKE = DATA[DATA['fraudulent']==0]
-
-NOT_FAKE.city.value_counts()
-NOT_FAKE.employment_type.value_counts()
-NOT_FAKE.industry.value_counts()
-NOT_FAKE.has_company_logo.value_counts()
-NOT_FAKE.required_education.value_counts()
-
-############
-### FAKE ###
-############
-
-FAKE = DATA[DATA['fraudulent']==1]
-
-FAKE.city.value_counts()
-FAKE.employment_type.value_counts()
-FAKE.industry.value_counts()
-FAKE.has_company_logo.value_counts()
-FAKE.required_education.value_counts()
-
-
-
-#############################
-### GENERATE WORD VECTORS ###
-#############################
-
-#WORD_VECTOR = tokenize_and_vectorize(TRAIN_DATA.description)
-#WORD_VECTOR_TRUNCATED = pad_trunc(data = WORD_VECTOR, max_length = 300)
-
-
-
-
-
-
+                   num_epochs       = 3)
 
 
 ###############################################################################
