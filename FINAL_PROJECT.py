@@ -551,14 +551,16 @@ def LOGISTIC_REGRESSION(TRAIN_DATA_X, TRAIN_DATA_Y, DEV_DATA_X, DEV_DATA_Y):
     plot_coefficients(LOGISTIC_REG, TRAIN_DATA_X.columns, 10)    
     
 ###############################################################################
-def run_neural_network(X_TRAIN_DATA, X_DEV_DATA, Y_TRAIN, Y_DEV, 
+def run_neural_network(X_TRAIN_DATA, X_DEV_DATA, X_TEST_DATA,
+                       Y_TRAIN, Y_DEV, Y_TEST,
                        num_neurons, max_length, embedding_length, num_epochs):
     
     print(" --> Running neural network")
     print("")
     
     NROWS_TRAIN, NCOLS = X_TRAIN_DATA.shape
-    NROWS_DEV, NCOLS   = X_DEV_DATA.shape
+    NROWS_TEST         = X_TEST_DATA.shape[0]    
+    NROWS_DEV          = X_DEV_DATA.shape[0]
     
     ###########################################################################
     ###########################################################################
@@ -573,7 +575,8 @@ def run_neural_network(X_TRAIN_DATA, X_DEV_DATA, Y_TRAIN, Y_DEV,
     # Each observation is a vector of vectors.
     X_TRAIN_VECTORIZED = tokenize_and_vectorize(X_TRAIN_DATA.all_text.values)
     X_DEV_VECTORIZED   = tokenize_and_vectorize(X_DEV_DATA.all_text.values)
-
+    X_TEST_VECTORIZED  = tokenize_and_vectorize(X_TEST_DATA.all_text.values)
+    
     ##################################
     ### FORMAT THE INPUT DATA SETS ###
     ##################################
@@ -582,6 +585,11 @@ def run_neural_network(X_TRAIN_DATA, X_DEV_DATA, Y_TRAIN, Y_DEV,
     # note that these are lists
     X_TRAIN_PADDED_DATA = pad_trunc(X_TRAIN_VECTORIZED, max_length)
     X_DEV_PADDED_DATA   = pad_trunc(X_DEV_VECTORIZED, max_length)
+    X_TEST_PADDED_DATA  = pad_trunc(X_TEST_VECTORIZED, max_length)
+    
+    del X_TRAIN_VECTORIZED
+    del X_DEV_VECTORIZED
+    del X_TEST_VECTORIZED
     
     ###########################################################################
     ###########################################################################
@@ -590,10 +598,11 @@ def run_neural_network(X_TRAIN_DATA, X_DEV_DATA, Y_TRAIN, Y_DEV,
     
     X_TRAIN_DATA_NON_TEXT = X_TRAIN_DATA.drop(columns=['all_text'])
     X_DEV_DATA_NON_TEXT   = X_DEV_DATA.drop(columns=['all_text'])
-    
+    X_TEST_DATA_NON_TEXT  = X_TEST_DATA.drop(columns=['all_text'])   
     
     X_TRAIN_DATA_NON_TEXT_PADDED = np.zeros([NROWS_TRAIN, embedding_length])
     X_DEV_DATA_NON_TEXT_PADDED   = np.zeros([NROWS_DEV, embedding_length])
+    X_TEST_DATA_NON_TEXT_PADDED  = np.zeros([NROWS_TEST, embedding_length])
     
     N = embedding_length-NCOLS+1
     
@@ -605,16 +614,23 @@ def run_neural_network(X_TRAIN_DATA, X_DEV_DATA, Y_TRAIN, Y_DEV,
         #print(" --> " + str(ROW))    
         X_DEV_DATA_NON_TEXT_PADDED[ROW]   = np.pad(X_DEV_DATA_NON_TEXT.values[ROW], (0, N), 'constant')
         
+    for ROW in range(NROWS_TEST):
+        #print(" --> " + str(ROW))    
+        X_TEST_DATA_NON_TEXT_PADDED[ROW]   = np.pad(X_TEST_DATA_NON_TEXT.values[ROW], (0, N), 'constant') 
+        
     ###########################################################################
     ###########################################################################
     ###########################################################################
     # Combine word vectors with non-word vector features
-    
+        
     for ROW in range(NROWS_TRAIN):
         X_TRAIN_PADDED_DATA[ROW].append(X_TRAIN_DATA_NON_TEXT_PADDED[ROW].tolist())
         
     for ROW in range(NROWS_DEV):
         X_DEV_PADDED_DATA[ROW].append(X_DEV_DATA_NON_TEXT_PADDED[ROW].tolist())
+        
+    for ROW in range(NROWS_TEST):
+        X_TEST_PADDED_DATA[ROW].append(X_TEST_DATA_NON_TEXT_PADDED[ROW].tolist())   
         
     ###########################################################################
     ###########################################################################
@@ -633,6 +649,10 @@ def run_neural_network(X_TRAIN_DATA, X_DEV_DATA, Y_TRAIN, Y_DEV,
                                              max_length+1, 
                                              embedding_length))
     
+    X_TEST_PADDED_FORMATTED_DATA = np.reshape(X_TEST_PADDED_DATA, 
+                                             (len(X_TEST_PADDED_DATA), 
+                                              max_length+1, 
+                                              embedding_length))    
     ###########################
     ### CREATE LSTM NETWORK ###
     ###########################
@@ -665,11 +685,11 @@ def run_neural_network(X_TRAIN_DATA, X_DEV_DATA, Y_TRAIN, Y_DEV,
                                  Y_DEV.values))
     
     # Value between 0 and 1.
-    PRED = model.predict(X_DEV_PADDED_FORMATTED_DATA)
+    PRED = model.predict(X_TEST_PADDED_FORMATTED_DATA)
 
     YHAT = np.where(PRED > 0.5, 1, 0)
     
-    GET_ACCURACY_RATE(YHAT, DEV_DATA_Y.values, True)
+    GET_ACCURACY_RATE(YHAT, TEST_DATA_Y.values, True)
     
 ###############################################################################   
 def LASSO_FEATURE_RANKING():
@@ -755,49 +775,73 @@ DATA = READ_DATA(DIR, FILENAME, SAMPLE_SIZE)
 
 #DATA_EXPLORATION(DATA)
 
-##################
-### CLEAN DATA ###
-##################
 
-CLEANED_DATA = CLEAN_DATA(DATA, BAG_OF_WORDS=True, INCLUDE_TEXT_VARS=True)
+############
+### LSTM ###
+############
+   
+if True:
 
-############################
-### TRAIN/DEV/TEST SPLIT ###
-############################
+   ##################
+   ### CLEAN DATA ###
+   ##################
 
-TRAIN_DATA, DEV_DATA, TEST_DATA = TRAIN_DEV_TEST_SPLIT(CLEANED_DATA, DEV_SHARE, TEST_SHARE)
+   CLEANED_DATA = CLEAN_DATA(DATA, BAG_OF_WORDS=False, INCLUDE_TEXT_VARS=True)
 
-TRAIN_DATA_X = TRAIN_DATA.drop(columns=['fraudulent'])
-TRAIN_DATA_Y = TRAIN_DATA.fraudulent
+   ############################
+   ### TRAIN/DEV/TEST SPLIT ###
+   ############################
 
-DEV_DATA_X = DEV_DATA.drop(columns=['fraudulent'])
-DEV_DATA_Y = DEV_DATA.fraudulent
+   TRAIN_DATA, DEV_DATA, TEST_DATA = TRAIN_DEV_TEST_SPLIT(CLEANED_DATA, DEV_SHARE, TEST_SHARE)
 
-TEST_DATA_X = TEST_DATA.drop(columns=['fraudulent'])
-TEST_DATA_Y = TEST_DATA.fraudulent
+   TRAIN_DATA_X = TRAIN_DATA.drop(columns=['fraudulent'])
+   TRAIN_DATA_Y = TRAIN_DATA.fraudulent
 
-##################################################
-################# MODELLING ######################
-##################################################
+   DEV_DATA_X = DEV_DATA.drop(columns=['fraudulent'])
+   DEV_DATA_Y = DEV_DATA.fraudulent
+
+   TEST_DATA_X = TEST_DATA.drop(columns=['fraudulent'])
+   TEST_DATA_Y = TEST_DATA.fraudulent
+
+
+   run_neural_network(X_TRAIN_DATA     = TRAIN_DATA_X, 
+                      X_DEV_DATA       = DEV_DATA_X, 
+                      X_TEST_DATA      = TEST_DATA_X,                   
+                      Y_TRAIN          = TRAIN_DATA_Y,
+                      Y_DEV            = DEV_DATA_Y,
+                      Y_TEST           = TEST_DATA_Y,
+                      num_neurons      = 32, 
+                      max_length       = 300, 
+                      embedding_length = 100,
+                      num_epochs       = 3)
 
 ####################
 ### LOGISTIC REG ###
 ####################
 
-LOGISTIC_REGRESSION(TRAIN_DATA_X, TRAIN_DATA_Y, DEV_DATA_X, DEV_DATA_Y)
+if False: 
+    
+   ##################
+   ### CLEAN DATA ###
+   ##################
 
-################
-### LSTM REG ###
-################
+   CLEANED_DATA = CLEAN_DATA(DATA, BAG_OF_WORDS=True, INCLUDE_TEXT_VARS=False)
 
-run_neural_network(X_TRAIN_DATA     = TRAIN_DATA_X, 
-                   X_DEV_DATA       = DEV_DATA_X, 
-                   Y_TRAIN          = TRAIN_DATA_Y,
-                   Y_DEV            = DEV_DATA_Y,
-                   num_neurons      = 32, 
-                   max_length       = 300, 
-                   embedding_length = 100,
-                   num_epochs       = 3)
+   ############################
+   ### TRAIN/DEV/TEST SPLIT ###
+   ############################
 
+   TRAIN_DATA, DEV_DATA, TEST_DATA = TRAIN_DEV_TEST_SPLIT(CLEANED_DATA, DEV_SHARE, TEST_SHARE)
+
+   TRAIN_DATA_X = TRAIN_DATA.drop(columns=['fraudulent'])
+   TRAIN_DATA_Y = TRAIN_DATA.fraudulent
+
+   DEV_DATA_X = DEV_DATA.drop(columns=['fraudulent'])
+   DEV_DATA_Y = DEV_DATA.fraudulent
+
+   TEST_DATA_X = TEST_DATA.drop(columns=['fraudulent'])
+   TEST_DATA_Y = TEST_DATA.fraudulent
+
+   LOGISTIC_REGRESSION(TRAIN_DATA_X, TRAIN_DATA_Y, DEV_DATA_X, DEV_DATA_Y)
 
 ###############################################################################
