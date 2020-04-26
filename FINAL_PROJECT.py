@@ -9,10 +9,8 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
-from sklearn.linear_model import Lasso
 from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.linear_model import LogisticRegression
-#from sklearn import svm
 
 from nltk.tokenize import TreebankWordTokenizer
 from keras.models import Sequential
@@ -40,12 +38,10 @@ SAMPLE_SIZE = 1 # fraction of dataset to sample
 DEV_SHARE  = 0.15 # fraction of dataset for dev set
 TEST_SHARE = 0.15 # fraction of dataset for test set
 
-random.seed(30)
-
 ###############################################################################
 ###############################################################################
 # Input is numpy array of strings
-# Output is a list of word vectors, indexed by input sentence number
+# Output is a list of word vectors
 def tokenize_and_vectorize(input_data):
     
     #w2v_embedding = api.load('word2vec-google-news-300')
@@ -55,10 +51,6 @@ def tokenize_and_vectorize(input_data):
     vectorized_data = []
 
     for element in input_data:
-
-        #cleaned_string = clean_string(element)
-        
-        #print("  -->" + str(element))
         
         if str(element)=='nan': element=""
         
@@ -79,8 +71,9 @@ def tokenize_and_vectorize(input_data):
     return vectorized_data
 
 ###############################################################################
-# Input is numpy array of strings
-# Output is a list of word vectors, indexed by input sentence number
+# Input is array of word vectors
+# Output is the same list truncated at max_length, and padded with zeros if 
+# shorter than max_length
 def pad_trunc(data, max_length):
     
     new_data = []
@@ -106,27 +99,9 @@ def pad_trunc(data, max_length):
         new_data.append(temp)
         
     return new_data
-###############################################################################
-# Input is numpy array of strings
-# Output is a list of word vectors, indexed by input sentence number
-def pad_trunc_2(data):
-    
-    max_length=100
-    
-    n,m = data.shape
-    
-    m_diff = max_length-m
-    
-    pad = np.zeros([n, m_diff])
-    
-    new_data = pd.concat([pd.DataFrame(data), pd.DataFrame(pad)], axis=1).values
-     
-    return new_data
 
 ###############################################################################
-#################
-### READ DATA ###
-#################
+##Read in the data. Take a sample fraction equal to SAMPLE_SIZE
 def READ_DATA(DIR, FILENAME, SAMPLE_SIZE):
     
     print("")
@@ -134,15 +109,14 @@ def READ_DATA(DIR, FILENAME, SAMPLE_SIZE):
     print("")
 
     RAW_DATA = pd.read_csv(DIR + '/DATA/' + FILENAME) 
-    #RAW_DATA.drop(columns=['job_id'])
     RAW_DATA = RAW_DATA.sample(frac=SAMPLE_SIZE)
     
     return RAW_DATA
 
 ###############################################################################
-#########################
-### CLEAN THE DATASET ###
-#########################
+# For feature engineering. If BAG_OF_WORDS=True, include bag of words features
+# If INCLUDE_TEXT_VARS=True, include the all_text variable, which contains all
+# of the text data concatenated.
 def CLEAN_DATA(DATA, BAG_OF_WORDS, INCLUDE_TEXT_VARS):
 
 ### VARIABLES ###
@@ -333,7 +307,7 @@ def CLEAN_DATA(DATA, BAG_OF_WORDS, INCLUDE_TEXT_VARS):
     ### CONVERT required_education TO DUMMIES ###
     #############################################  
     
-    # Only do so for the most frequent values. Need to create 'other' and blank categories.
+    # Only create dummies for the most frequent values
     EDUCATION_DUMMIES = pd.get_dummies(DATA.required_education)[["Bachelor's Degree", 'High School or equivalent',
                                                                  'Unspecified', "Master's Degree", "Associate Degree",
                                                                  "Certification", "Some College Coursework Completed"]]
@@ -346,7 +320,7 @@ def CLEAN_DATA(DATA, BAG_OF_WORDS, INCLUDE_TEXT_VARS):
                      "Associate Degree":                     "edu_associate",
                      "Certification":                        "edu_certification",
                      "Some College Coursework Completed":    "edu_some_college"
-                              })    
+                     })    
     
     DATA = pd.concat([DATA, EDUCATION_DUMMIES], axis=1)
 
@@ -403,6 +377,7 @@ def CLEAN_DATA(DATA, BAG_OF_WORDS, INCLUDE_TEXT_VARS):
     ### GENERATE VARIABLES FOR LENGTH OF TEXT FIELD ###
     ###################################################
 
+    # Take the log for some of the longer ones.
     DATA['title_length']           = DATA.title.str.len().fillna(1)
     DATA['company_profile_length'] = DATA.company_profile.str.len().fillna(1)  
     DATA['description_length']     = np.log(DATA.description.str.len().fillna(1)+ 0.0000001) # take log
@@ -413,7 +388,7 @@ def CLEAN_DATA(DATA, BAG_OF_WORDS, INCLUDE_TEXT_VARS):
     #############################################
     ### GENERATE BINARY BAG OF WORDS FEATURES ###
     #############################################   
-    
+    # Here we append all of the text features into 1 variable for the LSTM
     DATA['all_text']= (DATA['title'] + " " + 
                        DATA['company_profile'] + " " + 
                        DATA['description'] + " " + 
@@ -422,8 +397,8 @@ def CLEAN_DATA(DATA, BAG_OF_WORDS, INCLUDE_TEXT_VARS):
                        DATA['industry']
                        ) 
     
-    if BAG_OF_WORDS:
-          VECTORIZER = CountVectorizer(binary=True, min_df=30)
+    if BAG_OF_WORDS==True:
+          VECTORIZER = CountVectorizer(binary=False, min_df=15)
           BAG_OF_WORDS = VECTORIZER.fit_transform(DATA.all_text).toarray()
           BAG_OF_WORDS_DF = pd.DataFrame(BAG_OF_WORDS, columns=list(VECTORIZER.vocabulary_.keys()))
           BAG_OF_WORDS_DF = BAG_OF_WORDS_DF.rename(columns={"fraudulent":  "fraudulent_2"})
@@ -434,11 +409,11 @@ def CLEAN_DATA(DATA, BAG_OF_WORDS, INCLUDE_TEXT_VARS):
     if INCLUDE_TEXT_VARS==False:
         DATA=DATA.drop(columns=['all_text'])
        
-    #####################################
-    ###  REMOVE STRING FIELDS FOR NOW ###
-    #####################################  
+    #############################
+    ###  REMOVE STRING FIELDS ###
+    #############################  
     
-    # remove string fields
+    # These are all concatenated in the all_text variable
     DATA = DATA.drop(columns=['job_id', 'title', 'department', 'company_profile',
                               'description', 'requirements', 'benefits', 'industry'])
     
@@ -453,17 +428,13 @@ def CLEAN_DATA(DATA, BAG_OF_WORDS, INCLUDE_TEXT_VARS):
     return DATA
 
 ###############################################################################
-#######################################
-### SUBSET DATA INTO TRAIN/DEV/TEST ###
-#######################################
+# For dividing data into TRAIN/DEV/TEST. The DEV_SHARE is the share that is
+# put in the dev set (0.15=15%)
 def TRAIN_DEV_TEST_SPLIT(INPUT_DATA, DEV_SHARE, TEST_SHARE):
         
-    # Sort the data
+    # Randomly sort the data
     INPUT_DATA = INPUT_DATA.sample(frac=1, random_state=1)
     
-    # Use the test_share and dev_share variables hard-coded at the top to 
-    # compute the number of observations in the train and dev data sets. Then
-    # use these values to divide up the raw data set into 3 parts.
     NUM_OBS       = INPUT_DATA.shape[0]
     NUM_TRAIN_OBS = math.ceil(NUM_OBS*(1-TEST_SHARE-DEV_SHARE))
     NUM_DEV_OBS   = math.floor(NUM_OBS*DEV_SHARE)
@@ -475,8 +446,8 @@ def TRAIN_DEV_TEST_SPLIT(INPUT_DATA, DEV_SHARE, TEST_SHARE):
     return TRAIN_DATA, DEV_DATA, TEST_DATA
 
 ###############################################################################  
-# Input a vector of predicted Y values and the actual Y values. Return accuracy
-# rate. 
+# Input a vector of predicted Y values and the actual Y values. 
+# Return evaluation metrics
 def GET_ACCURACY_RATE(Y_HAT_VECTOR, Y_VECTOR, PRINT_ACCURACY_RATE):
     
     Y_HAT_VECTOR_LEN = Y_HAT_VECTOR.shape[0]
@@ -492,24 +463,28 @@ def GET_ACCURACY_RATE(Y_HAT_VECTOR, Y_VECTOR, PRINT_ACCURACY_RATE):
     FN = 0
     
     for x in range(Y_VECTOR_LEN):
-        if Y_HAT_VECTOR[x]==1  and Y_VECTOR[x]==1: TP += 1        
-        if Y_HAT_VECTOR[x]==1  and Y_VECTOR[x]==0: FP += 1
+        if Y_HAT_VECTOR[x]==1 and Y_VECTOR[x]==1: TP += 1        
+        if Y_HAT_VECTOR[x]==1 and Y_VECTOR[x]==0: FP += 1
         if Y_HAT_VECTOR[x]==0 and Y_VECTOR[x]==0: TN += 1
         if Y_HAT_VECTOR[x]==0 and Y_VECTOR[x]==1: FN += 1        
         
     ACCURACY  = (TP+TN)/Y_HAT_VECTOR_LEN*100
     RECALL    = TP/(TP+FN)*100
     PRECISION = TP/(TP+FP)*100
+    F1        = 2*(PRECISION*RECALL)/(PRECISION+RECALL)
     
     if PRINT_ACCURACY_RATE==True:
        print("")
-       print(" --> Accuracy Rate: " + str(round(ACCURACY,2)) + "%")
-       print(" --> Recall: " + str(round(RECALL,2)) + "%")
-       print(" --> Precision: " + str(round(PRECISION,2)) + "%")
+       print(" --> Accuracy Rate: " + str(round(ACCURACY, 2)) + "%")
+       print(" --> Recall: " + str(round(RECALL, 2)) + "%")
+       print(" --> Precision: " + str(round(PRECISION, 2)) + "%")
+       print(" --> F1: " + str(round(F1, 2)) + "%")       
        print("")
        
     return ACCURACY
+
 ###############################################################################
+# This is for plotting the coefficients in the logistic regression chart.
 def plot_coefficients(classifier, feature_names, top_features=10):
     
     coef = classifier.coef_.ravel()
@@ -531,26 +506,31 @@ def plot_coefficients(classifier, feature_names, top_features=10):
              tick_label = feature_names[top_coefficients])
     
     ax.set_ylabel('Variable')
-    ax.set_title('Logistic Regression (with l-1 reg) Weights')
+    ax.set_title('Logistic Regression Weights')
     
     plt.show()
     
 ###############################################################################
-def LOGISTIC_REGRESSION(TRAIN_DATA_X, TRAIN_DATA_Y, DEV_DATA_X, DEV_DATA_Y):
+# Run logistic regression
+def LOGISTIC_REGRESSION(TRAIN_DATA_X, TRAIN_DATA_Y, 
+                        DEV_DATA_X, DEV_DATA_Y,
+                        TEST_DATA_X, TEST_DATA_Y
+                        ):
     
-    TRAIN_DATA_X = TRAIN_DATA_X.drop(columns=['all_text'])
-    DEV_DATA_X   = DEV_DATA_X.drop(columns=['all_text'])
-    
-    LOGISTIC_REG = (LogisticRegression(penalty='l1', max_iter=200).
+    LOGISTIC_REG = (LogisticRegression(penalty='l2', 
+                                       max_iter=200, 
+                                       #solver='lbfgs'
+                                       ).
                     fit(TRAIN_DATA_X, TRAIN_DATA_Y))
 
     # Generate the predicted values
-    Y_HAT = (LOGISTIC_REG.predict(DEV_DATA_X))
-    GET_ACCURACY_RATE(Y_HAT, DEV_DATA_Y.values, True)
+    Y_HAT = (LOGISTIC_REG.predict(TEST_DATA_X))
+    GET_ACCURACY_RATE(Y_HAT, TEST_DATA_Y.values, True)
     
     plot_coefficients(LOGISTIC_REG, TRAIN_DATA_X.columns, 10)    
     
 ###############################################################################
+# Run the LSTM
 def run_neural_network(X_TRAIN_DATA, X_DEV_DATA, X_TEST_DATA,
                        Y_TRAIN, Y_DEV, Y_TEST,
                        num_neurons, max_length, embedding_length, num_epochs):
@@ -683,48 +663,18 @@ def run_neural_network(X_TRAIN_DATA, X_DEV_DATA, X_TEST_DATA,
               epochs = num_epochs,
               validation_data = (X_DEV_PADDED_FORMATTED_DATA, 
                                  Y_DEV.values))
+
+    #######################
+    ### RUN ON TEST SET ###
+    #######################
     
     # Value between 0 and 1.
     PRED = model.predict(X_TEST_PADDED_FORMATTED_DATA)
 
     YHAT = np.where(PRED > 0.5, 1, 0)
     
+    # Get evaluation metrics
     GET_ACCURACY_RATE(YHAT, TEST_DATA_Y.values, True)
-    
-###############################################################################   
-def LASSO_FEATURE_RANKING():
-    
-    from sklearn.feature_selection import RFE
-    from sklearn.preprocessing import MinMaxScaler
-    import seaborn as sns
-
-
-    # Define dictionary to store our rankings
-    ranks = {}
-    # Create our function which stores the feature rankings to the ranks dictionary
-    def ranking(ranks, names, order=1):
-        minmax = MinMaxScaler()
-        ranks = minmax.fit_transform(order*np.array([ranks]).T).T[0]
-        ranks = map(lambda x: round(x,2), ranks)
-        return dict(zip(names, ranks))
-
-    lasso = Lasso()
-    rfe = RFE(lasso, n_features_to_select=1)
-    rfe.fit(TRAIN_DATA_X, TRAIN_DATA_Y)
-    
-    ranks["rank"] = ranking(list(map(float, rfe.ranking_)), 
-                            TRAIN_DATA_X.columns, 
-                            order=-1)
-    
-    DF = pd.DataFrame.from_dict(ranks).sort_values(by=['rank'], ascending=False)   
-    
-    sns.factorplot(x="rank", 
-                   #y="Feature", 
-                   data = DF, 
-                   kind="bar", 
-                   size=14, 
-                   aspect=1.9, 
-                   palette='coolwarm')
     
 ###############################################################################
 def DATA_EXPLORATION(DATA):
@@ -758,11 +708,11 @@ def DATA_EXPLORATION(DATA):
     FAKE.has_company_logo.value_counts()
     FAKE.required_education.value_counts() 
     
-    x = FAKE.sort_values(by=['description']).description
+    #x = FAKE.sort_values(by=['description']).description
     
 ###############################################################################   
 ###############################################################################       
-    
+
 #################
 ### READ DATA ###
 #################
@@ -803,7 +753,10 @@ if True:
    TEST_DATA_X = TEST_DATA.drop(columns=['fraudulent'])
    TEST_DATA_Y = TEST_DATA.fraudulent
 
-
+   ####################
+   ### RUN THE LSTM ###
+   ####################
+   
    run_neural_network(X_TRAIN_DATA     = TRAIN_DATA_X, 
                       X_DEV_DATA       = DEV_DATA_X, 
                       X_TEST_DATA      = TEST_DATA_X,                   
@@ -811,7 +764,7 @@ if True:
                       Y_DEV            = DEV_DATA_Y,
                       Y_TEST           = TEST_DATA_Y,
                       num_neurons      = 32, 
-                      max_length       = 300, 
+                      max_length       = 300, # max number of words per obs
                       embedding_length = 100,
                       num_epochs       = 3)
 
@@ -819,13 +772,13 @@ if True:
 ### LOGISTIC REG ###
 ####################
 
-if False: 
+if True: 
     
    ##################
    ### CLEAN DATA ###
    ##################
 
-   CLEANED_DATA = CLEAN_DATA(DATA, BAG_OF_WORDS=True, INCLUDE_TEXT_VARS=False)
+   CLEANED_DATA = CLEAN_DATA(DATA, BAG_OF_WORDS=False, INCLUDE_TEXT_VARS=False)
 
    ############################
    ### TRAIN/DEV/TEST SPLIT ###
@@ -841,7 +794,17 @@ if False:
 
    TEST_DATA_X = TEST_DATA.drop(columns=['fraudulent'])
    TEST_DATA_Y = TEST_DATA.fraudulent
-
-   LOGISTIC_REGRESSION(TRAIN_DATA_X, TRAIN_DATA_Y, DEV_DATA_X, DEV_DATA_Y)
+    
+   #################
+   ### RUN MODEL ###
+   #################
+   
+   LOGISTIC_REGRESSION(TRAIN_DATA_X, 
+                       TRAIN_DATA_Y, 
+                       DEV_DATA_X, 
+                       DEV_DATA_Y,
+                       TEST_DATA_X,
+                       TEST_DATA_Y
+                       )
 
 ###############################################################################
